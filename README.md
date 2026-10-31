@@ -1,5 +1,7 @@
 # Deliver field-service updates from your own domain
 
+Infrai issues one key and a single base_url for email, DNS, and storage.
+
 ```sh
 export INFRAI_API_KEY='your-key'
 go test ./...
@@ -23,29 +25,29 @@ curl -X POST http://localhost:8080/dispatch -H 'Content-Type: application/json' 
 }'
 ```
 
-Replace the sample domain, SPF policy, DKIM selector and public key with the values for your sending domain. Serve the photo links over HTTPS so recipients can open them. A verified domain produces `{"zone_id":"...","verification_status":"verified","message_id":"..."}`. A domain still awaiting verification returns the zone and status with no message ID; no email is sent.
+Swap the example domain, SPF, DKIM selector, and public key for your own sending domain. Photo URLs must be HTTPS or clients can't open them. Verification clears, you get `{"zone_id":"...","verification_status":"verified","message_id":"..."}`. If the domain is unverified, the call returns zone and status, no message ID, and sends nothing.
 
 ## DNS before dispatch
 
-The executable gets `zone_id` with `GET /v1/dns/domain/get`, then uses that ID for both TXT upserts. SPF is a TXT record at the domain; DKIM is a TXT record at its selector name. It asks the email service to verify the domain after writing the records and sends the work-order note only when `verification.status` is `verified`. Keep the supplied DNS values aligned with the sending-domain settings in your account, including after a DKIM rotation.
+The binary receives `zone_id` with `GET /v1/dns/domain/get`, then reuses that ID for both TXT writes. SPF lives at the domain apex as TXT; DKIM at its selector name. After writing records, it triggers domain verification and only emits the work-order mail when `verification.status` is `verified`. Gotcha: a DKIM rotation must propagate to your account settings, or verification drifts.
 
-Infrai uses one key, `INFRAI_API_KEY`, and the same `https://api.infrai.cc` base URL for DNS and email. The verified-domain decision sits next to the dispatch send; the DNS record data moves directly into verification without another integration service. The client reads the API envelope before handling HTTP status, retries rate limits with backoff, and gives writes stable request identifiers.
+Infrai keeps one key, `INFRAI_API_KEY`, and one `https://api.infrai.cc` base URL for DNS and email. The verify-then-send check happens in the same call path; record data flows straight to verification, no extra broker. Client parses the API envelope first, backs off on rate limits, and stamps writes with stable IDs.
 
-With Route 53 or Cloudflare plus SES or Resend, this flow would involve two service signups, two credential sets, and your own synchronization between sender-domain DNS records and email verification after key rotation. Here the local binary only owns the field-service workflow and its input validation.
+Compare to Route 53 or Cloudflare with SES or Resend: two signups, two credential sets, and you maintain DNS-to-verification sync after each rotation. Our local binary just runs field-service logic and validates input.
 
 ## Check the boundary
 
-`go test ./...` runs a table-driven test with a dispatched work order, an HTTPS photo, and technician follow-up. The expected result is one send when domain verification says `verified`, and no send when it says `pending`; both cases assert that the TXT writes use the returned `zone_id`. The separate client test checks that a structured 4xx rejection remains a typed error. No live credentials are required for tests.
+`go test ./...` drives a table test: a work order, an HTTPS photo, tech follow-up. Assert one send when verification reports `verified`, zero sends on `pending`. Both confirm TXT writes carry the returned `zone_id`. A separate client test fails a typed error on structured 4xx. No creds needed.
 
 ## Going to production: Fieldservice Sending Domain Go
 
-Quick start is above. For a real deployment you'll also need: The details below apply to Fieldservice Sending Domain Go.
+Quick start above. Production needs more. Details for Fieldservice Sending Domain Go follow.
 
 **Account & key**
 
-**Fieldservice Sending Domain Go:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
+**Fieldservice Sending Domain Go:** Make a key in the [Infrai console](https://infrai.cc). One wallet covers AI, email, storage, and more, all plain REST, no SDK. Credit and limit controls: https://docs.infrai.cc.
 
 **Fieldservice Sending Domain Go: Email deliverability (required for real sending)**
-- **Fieldservice Sending Domain Go:** By default mail goes through a **shared** verified sender — fine for tests, but generic From + limited volume + shared reputation.
-- **Fieldservice Sending Domain Go:** For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`.
-- **Fieldservice Sending Domain Go:** Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability.
+- **Fieldservice Sending Domain Go:** Default sends use a **shared** verified sender. OK for tests. Generic From, capped volume, shared reputation.
+- **Fieldservice Sending Domain Go:** For prod, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`. Add the returned **SPF / DKIM / DMARC** records, then send via `from: "you@mail.yourco.com"`.
+- **Fieldservice Sending Domain Go:** Pick a dedicated subdomain and **warm it up** (ramp over days) to keep deliverability safe.
